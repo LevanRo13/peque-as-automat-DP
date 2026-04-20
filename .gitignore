@@ -1,0 +1,9 @@
+# Ignorar las planillas con datos de clientes
+*.xls
+*.xlsx
+*.csv
+
+# Logs y basura del OS
+npm-debug.log
+.DS_Store
+Thumbs.db
