@@ -1,4 +1,23 @@
-# Retomar — Feature `actualizarCodigos.js`
+# Retomar — `actualizarCodigos.js`
+
+## ⚠️ ANTES DE ARRANCAR — Bug conocido
+La línea 21-22 de `actualizarCodigos.js` tiene un error de corrupción al pegar. Buscá esto:
+
+```js
+.replace(/&amp;/g, '&').repla¿
+} ce(/<[^>]+>/g, '').trim();
+```
+
+Y reemplazalo por esto:
+
+```js
+.replace(/&amp;/g, '&')
+.replace(/<[^>]+>/g, '').trim();
+```
+
+**Sin esto el script no va a correr.**
+
+---
 
 ## Objetivo
 Tomar `clientes-zona.xlsx` y actualizarlo con los datos de `clientes-activos.xls`.
@@ -6,6 +25,19 @@ Generar `clientes-zona-actualizado.xls` con:
 - Códigos, teléfonos y zonas actualizados donde haya match
 - Filas ambiguas (doble/triple match sin desempate) en **rojo** `#FF0000`
 - Clientes nuevos (solo en activos, no en zona) agregados al final en **celeste** `#ADD8E6`
+
+---
+
+## Setup en PC nueva
+```bash
+git clone https://github.com/LevanRo13/peque-as-automat-DP.git
+cd peque-as-automat-DP
+npm install
+```
+
+Además necesitás copiar manualmente a la carpeta:
+- `clientes-activos.xls` + su carpeta `clientes-activos_archivos/` (no están en el repo por `.gitignore`)
+- `clientes-zona.xlsx`
 
 ---
 
@@ -43,121 +75,41 @@ Generar `clientes-zona-actualizado.xls` con:
 
 ---
 
-## Estado actual del script
+## Estado de las partes
 
-```javascript
-const fs   = require('fs');
-const xlsx = require('xlsx');
-
-// --- UTILIDADES ---
-
-function parseTable(html) {
-    const rows = [];
-    const trs = html.split(/<tr[^>]*>/i).slice(1);
-    for (let tr of trs) {
-        tr = tr.split(/<\/tr>/i)[0];
-        const tds = tr.split(/<(?:td|th)[^>]*>/i).slice(1);
-        const cols = [];
-        for (let td of tds) {
-            let val = td.split(/<\/(?:td|th)>/i)[0];
-            val = val
-                .replace(/&nbsp;/g, ' ')
-                .replace(/&oacute;/g, 'ó').replace(/&iacute;/g, 'í')
-                .replace(/&aacute;/g, 'á').replace(/&eacute;/g, 'é')
-                .replace(/&uacute;/g, 'ú').replace(/&ntilde;/g, 'ñ')
-                .replace(/&Ntilde;/g, 'Ñ').replace(/&#39;/g, "'")
-                .replace(/&amp;/g, '&').replace(/<[^>]+>/g, '').trim();
-            cols.push(val);
-        }
-        if (cols.length > 0) rows.push(cols);
-    }
-    return rows;
-}
-
-function normalizeStr(str) {
-    if (!str) return '';
-    return str
-        .toString()
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .trim()
-        .replace(/\s+/g, ' ');
-}
-
-// --- PARTE 1: LECTURA DE ARCHIVOS ---
-
-const activosHtml   = fs.readFileSync('clientes-activos_archivos/sheet001.htm', 'latin1');
-const activosRows   = parseTable(activosHtml);
-const activosHeader = activosRows[0];
-const activosData   = activosRows.slice(1);
-
-const wbZona     = xlsx.readFile('clientes-zona.xlsx');
-const wsZona     = wbZona.Sheets[wbZona.SheetNames[0]];
-const zonaRows   = xlsx.utils.sheet_to_json(wsZona, { header: 1 });
-const zonaHeader = zonaRows[0];
-const zonaData   = zonaRows.slice(1);
-
-// --- PARTE 2: CONSTRUIR MAP DE LOOKUP ---
-
-const activosMap = new Map();
-
-activosData.forEach(row => {
-    const razonSocial = normalizeStr(row[1]);
-    if (!razonSocial) return;
-
-    const candidato = {
-        codigo:     row[0],
-        telefono:   row[2],
-        domicilio:  normalizeStr(row[4]),
-        codigoZona: row[7],
-        zona:       row[8],
-    };
-
-    if (!activosMap.has(razonSocial)) {
-        activosMap.set(razonSocial, []);
-    }
-
-    activosMap.get(razonSocial).push(candidato);
-});
-```
+- ✅ Parte 1 — Lectura de archivos
+- ✅ Parte 2 — Construcción del Map de lookup
+- ✅ Parte 3 — Comparación, fuzzy y clasificación por color
+- 🔲 Parte 4 — Agregar clientes nuevos desde activos (celeste)
+- 🔲 Parte 5 — Generar el Excel de salida
 
 ---
 
 ## Partes pendientes
 
-### Parte 3 — Iterar zona y resolver cada fila
-```
-Para cada fila de clientes-zona:
-  │
-  ├─ Normalizar RAZON_SOCIAL
-  ├─ Buscar en activosMap
-  │
-  ├─ 0 matches → dejar fila sin tocar, color normal
-  │
-  ├─ 1 match exacto → actualizar:
-  │     row[0] = codigo
-  │     row[2] = telefono
-  │     row[7] = codigoZona
-  │     row[8] = zona
-  │     color normal
-  │
-  └─ 2+ matches → comparar Domicilio con fuzzy (Dice coefficient, umbral 85%)
-        │
-        ├─ 1 candidato supera 85% → actualizar, color normal
-        └─ empate / ninguno / 2+ superan 85% → NO actualizar, marcar ROJO
-```
-
 ### Parte 4 — Agregar clientes nuevos desde activos
-- Construir `Set` con razones sociales normalizadas de `clientes-zona`
+- Construir un `Set` con las razones sociales normalizadas de **todas** las filas de `clientes-zona`
 - Iterar `clientes-activos`
-- Los que no estén en el Set → agregar al output con fondo **celeste**
+- Si la razón social normalizada **no está** en el Set → es un cliente nuevo
+- Agregarlo a `outputRows` con `color: '#ADD8E6'`
 
 ### Parte 5 — Generar el output
-- Formato HTML-as-XLS
+- Formato HTML-as-XLS (mismo approach que `compare.js`)
 - Header: columnas de `clientes-zona`
+- Filas normales → sin color
+- Filas ambiguas → `style="background-color:#FF0000"`
+- Filas nuevas → `style="background-color:#ADD8E6"`
 - Escribir `clientes-zona-actualizado.xls` encoding `latin1`
-- Loggear estadísticas en consola
+- Loggear en consola:
+```
+Filas en clientes-zona:        X
+Actualizadas con match exacto: X
+Actualizadas con fuzzy:        X
+Ambiguas (marcadas en rojo):   X
+Sin match:                     X
+Clientes nuevos agregados:     X
+Archivo generado: clientes-zona-actualizado.xls
+```
 
 ---
 
@@ -179,5 +131,5 @@ Umbral: **0.85**
 ---
 
 ## Cómo retomar
-1. Abrí `actualizarCodigos.js` y verificá que tenga el código del estado actual de arriba
-2. Pedile al asistente: _"continuemos con la parte 3 de actualizarCodigos"_
+1. Corregí el bug de la línea 21-22 (ver arriba ⚠️)
+2. Pedile al asistente: _"continuemos con la parte 4 de actualizarCodigos"_
