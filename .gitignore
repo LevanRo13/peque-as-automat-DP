@@ -1,3 +1,4 @@
+node_modules/
 # Ignorar las planillas con datos de clientes
 *.xls
 *.xlsx
@@ -7,3 +8,4 @@
 npm-debug.log
 .DS_Store
 Thumbs.db
+clientes-activos_archivos/
