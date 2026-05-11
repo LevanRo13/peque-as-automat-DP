@@ -18,12 +18,13 @@ function parseTable(html) {
 				.replace(/&aacute;/g, 'á').replace(/&eacute;/g, 'é')
 				.replace(/&uacute;/g, 'ú').replace(/&ntilde;/g, 'ñ')
 				.replace(/&Ntilde;/g, 'Ñ').replace(/&#39;/g, "'")
-				.replace(/&amp;/g, '&').replace(/<[^>]+>/g, '').trim();
-			cols.push(val);
-		}
-		if (cols.length > 0) rows.push(cols);
+				.replace(/&amp;/g, '&').repla¿
+		} ce(/<[^>]+>/g, '').trim();
+		cols.push(val);
 	}
-	return rows;
+	if (cols.length > 0) rows.push(cols);
+}
+return rows;
 }
 
 function normalizeStr(str) {
@@ -67,4 +68,85 @@ activosData.forEach(row => {
 		activosMap.set(razonSocial, []);
 	}
 	activosMap.get(razonSocial).push(candidato);
+});
+
+// --- FUNCIÓN FUZZY: DICE COEFFICIENT ---
+
+function diceCoefficient(a, b) {
+	if (!a || !b) return 0;
+	if (a === b) return 1;
+
+	const bigrams = str => {
+		const result = new Set();
+		for (let i = 0; i < str.length - 1; i++) {
+			result.add(str[i] + str[i + 1]);
+		}
+		return result;
+	};
+
+	const bigramsA = bigrams(a);
+	const bigramsB = bigrams(b);
+
+	let intersection = 0;
+	bigramsA.forEach(bg => {
+		if (bigramsB.has(bg)) intersection++;
+	});
+
+	return (2 * intersection) / (bigramsA.size + bigramsB.size);
+}
+
+const FUZZY_THRESHOLD = 0.85;
+
+// --- PARTE 3: COMPARACIÓN Y ACTUALIZACIÓN ---
+
+const outputRows = [];
+let countExacto = 0;
+let countFuzzy = 0;
+let countRojo = 0;
+let countSinMatch = 0;
+
+zonaData.forEach(row => {
+	const razonSocial = normalizeStr(row[1]);
+	const candidatos = activosMap.get(razonSocial);
+	const newRow = row.map(c => c ?? '');
+
+	// 0 matches — sin tocar
+	if (!candidatos || candidatos.length === 0) {
+		countSinMatch++;
+		outputRows.push({ row: newRow, color: null });
+		return;
+	}
+
+	// 1 match exacto — actualizar directo
+	if (candidatos.length === 1) {
+		const match = candidatos[0];
+		newRow[0] = match.codigo;
+		newRow[2] = match.telefono;
+		newRow[7] = match.codigoZona;
+		newRow[8] = match.zona;
+		countExacto++;
+		outputRows.push({ row: newRow, color: null });
+		return;
+	}
+
+	// 2+ matches — desempate por fuzzy en domicilio
+	const domicilioZona = normalizeStr(row[4]);
+	const superanUmbral = candidatos.filter(c =>
+		diceCoefficient(domicilioZona, c.domicilio) >= FUZZY_THRESHOLD
+	);
+
+	if (superanUmbral.length === 1) {
+		const match = superanUmbral[0];
+		newRow[0] = match.codigo;
+		newRow[2] = match.telefono;
+		newRow[7] = match.codigoZona;
+		newRow[8] = match.zona;
+		countFuzzy++;
+		outputRows.push({ row: newRow, color: null });
+		return;
+	}
+
+	// Empate, ninguno supera, o 2+ superan — rojo
+	countRojo++;
+	outputRows.push({ row: newRow, color: '#FF0000' });
 });
