@@ -18,8 +18,8 @@ function parseTable(html) {
 				.replace(/&aacute;/g, 'á').replace(/&eacute;/g, 'é')
 				.replace(/&uacute;/g, 'ú').replace(/&ntilde;/g, 'ñ')
 				.replace(/&Ntilde;/g, 'Ñ').replace(/&#39;/g, "'")
-				.replace(/&amp;/g, '&').repla¿
-		} ce(/<[^>]+>/g, '').trim();
+				.replace(/&amp;/g, '&')
+			.replace(/<[^>]+>/g, '').trim();
 		cols.push(val);
 	}
 	if (cols.length > 0) rows.push(cols);
@@ -150,3 +150,73 @@ zonaData.forEach(row => {
 	countRojo++;
 	outputRows.push({ row: newRow, color: '#FF0000' });
 });
+
+// --- PARTE 4: AGREGAR CLIENTES NUEVOS (celeste) ---
+
+const razonesEnZona = new Set(
+	zonaData.map(row => normalizeStr(row[1]))
+);
+
+let countNuevos = 0;
+
+activosData.forEach(row => {
+	const razonSocial = normalizeStr(row[1]);
+	if (!razonSocial) return;
+	if (razonesEnZona.has(razonSocial)) return;
+
+	// Construir fila con el mismo ancho que zonaHeader
+	const newRow = new Array(zonaHeader.length).fill('');
+	newRow[0] = row[0] ?? '';  // CODIGO
+	newRow[1] = row[1] ?? '';  // RAZON_SOCIAL
+	newRow[2] = row[2] ?? '';  // Teléfono
+	newRow[4] = row[4] ?? '';  // Domicilio
+	newRow[7] = row[7] ?? '';  // Código Zona
+	newRow[8] = row[8] ?? '';  // Zona
+
+	outputRows.push({ row: newRow, color: '#ADD8E6' });
+	countNuevos++;
+});
+
+// --- PARTE 5: GENERAR OUTPUT HTML-as-XLS ---
+
+function cellStyle(color) {
+	return color ? ` style="background-color:${color}"` : '';
+}
+
+function escapeHtml(val) {
+	return String(val ?? '')
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;');
+}
+
+let html = '<html><head><meta charset="windows-1252"></head><body><table>';
+
+// Header
+html += '<tr>';
+for (const col of zonaHeader) {
+	html += `<th>${escapeHtml(col)}</th>`;
+}
+html += '</tr>';
+
+// Filas
+for (const { row, color } of outputRows) {
+	html += `<tr${cellStyle(color)}>`;
+	for (const cell of row) {
+		html += `<td>${escapeHtml(cell)}</td>`;
+	}
+	html += '</tr>';
+}
+
+html += '</table></body></html>';
+
+fs.writeFileSync('clientes-zona-actualizado.xls', html, 'latin1');
+
+// Log final
+console.log(`Filas en clientes-zona:        ${zonaData.length}`);
+console.log(`Actualizadas con match exacto: ${countExacto}`);
+console.log(`Actualizadas con fuzzy:        ${countFuzzy}`);
+console.log(`Ambiguas (marcadas en rojo):   ${countRojo}`);
+console.log(`Sin match:                     ${countSinMatch}`);
+console.log(`Clientes nuevos agregados:     ${countNuevos}`);
+console.log(`Archivo generado: clientes-zona-actualizado.xls`);
