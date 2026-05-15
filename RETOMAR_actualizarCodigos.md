@@ -1,30 +1,7 @@
 # Retomar — `actualizarCodigos.js`
 
-## ⚠️ ANTES DE ARRANCAR — Bug conocido
-La línea 21-22 de `actualizarCodigos.js` tiene un error de corrupción al pegar. Buscá esto:
-
-```js
-.replace(/&amp;/g, '&').repla¿
-} ce(/<[^>]+>/g, '').trim();
-```
-
-Y reemplazalo por esto:
-
-```js
-.replace(/&amp;/g, '&')
-.replace(/<[^>]+>/g, '').trim();
-```
-
-**Sin esto el script no va a correr.**
-
----
-
-## Objetivo
-Tomar `clientes-zona.xlsx` y actualizarlo con los datos de `clientes-activos.xls`.
-Generar `clientes-zona-actualizado.xls` con:
-- Códigos, teléfonos y zonas actualizados donde haya match
-- Filas ambiguas (doble/triple match sin desempate) en **rojo** `#FF0000`
-- Clientes nuevos (solo en activos, no en zona) agregados al final en **celeste** `#ADD8E6`
+## Estado actual
+✅ Script completo y funcional. No hay partes pendientes de implementación.
 
 ---
 
@@ -35,101 +12,120 @@ cd peque-as-automat-DP
 npm install
 ```
 
-Además necesitás copiar manualmente a la carpeta:
-- `clientes-activos.xls` + su carpeta `clientes-activos_archivos/` (no están en el repo por `.gitignore`)
-- `clientes-zona.xlsx`
+Copiar manualmente a la carpeta (no están en el repo por `.gitignore`):
+- `clientes-activos.xls` + carpeta `clientes-activos_archivos/`
+- `nuevosClientes-Zona.xlsx`
+
+Ejecutar:
+```bash
+node actualizarCodigos.js
+```
 
 ---
 
-## Archivos del proyecto
+## Objetivo
+Cruzar `nuevosClientes-Zona.xlsx` contra `clientes-activos` para actualizar códigos y datos.
+Genera `clientes-zona-actualizado.xls` con:
+- Filas con match → estructura combinada zona + activos
+- Filas sin match o ambiguas → fila intacta de zona en **rojo** `#FF0000`
+
+---
+
+## Inputs
 | Archivo | Rol |
 |---|---|
-| `clientes-activos_archivos/sheet001.htm` | Fuente de verdad (HTML multi-archivo del ERP) |
-| `clientes-zona.xlsx` | Archivo a actualizar |
-| `actualizarCodigos.js` | Script en construcción |
-| `PLAN_actualizarCodigos.md` | Plan detallado completo |
+| `clientes-activos_archivos/sheet001.htm` | Fuente de verdad — HTML multi-archivo del ERP |
+| `nuevosClientes-Zona.xlsx` | Archivo base a actualizar |
+
+## Output
+`clientes-zona-actualizado.xls`
 
 ---
 
 ## Estructura de columnas
 
-### `clientes-activos` (sheet001.htm)
+### `clientes-activos` (sheet001.htm, parseado como HTML)
 | Índice | Columna |
 |---|---|
-| 0 | Código ← actualizar en zona |
+| 0 | Código |
 | 1 | Razón Social ← comparar |
-| 2 | Teléfono ← actualizar en zona |
+| 2 | Teléfono |
+| 3 | Condición IVA |
 | 4 | Domicilio ← desempate fuzzy |
-| 7 | Código Zona ← actualizar en zona |
-| 8 | Zona ← actualizar en zona |
+| 5 | Departamento |
+| 6 | Provincia |
+| 7 | Código Zona |
+| 8 | Zona |
 
-### `clientes-zona` (xlsx, header en row 0, datos desde row 1)
+### `nuevosClientes-Zona.xlsx` (header row 0, datos desde row 1)
 | Índice | Columna |
 |---|---|
-| 0 | CODIGO ← reemplazar |
-| 1 | RAZON_SOCIAL ← comparar |
-| 2 | Teléfono ← reemplazar |
-| 4 | Domicilio ← desempate fuzzy |
-| 7 | Código Zona ← reemplazar |
-| 8 | Zona ← reemplazar |
+| 0 | WKT |
+| 1 | nombre |
+| 2 | CODIGO |
+| 3 | RAZON_SOCIAL ← comparar |
+| 4 | Teléfono |
+| 5 | Email |
+| 6 | Condición IVA |
+| 7 | Domicilio ← desempate fuzzy |
+| 8 | Departamento |
+| 9 | Provincia |
+| 10 | Zona |
+
+### Output — estructura de fila con match
+| Col | Fuente |
+|---|---|
+| A - WKT | nuevosClientes-Zona (índice 0) |
+| B - nombre | nuevosClientes-Zona (índice 1) |
+| C - CODIGO | clientes-activos (índice 0) |
+| D - RAZON_SOCIAL | clientes-activos (índice 1) |
+| E - Teléfono | clientes-activos (índice 2) |
+| F - Condición IVA | clientes-activos (índice 3) |
+| G - Domicilio | clientes-activos (índice 4) |
+| H - Departamento | clientes-activos (índice 5) |
+| I - Provincia | clientes-activos (índice 6) |
+| J - Código Zona | clientes-activos (índice 7) |
+| K - Zona | clientes-activos (índice 8) |
 
 ---
 
-## Estado de las partes
+## Lógica de matching
 
-- ✅ Parte 1 — Lectura de archivos
-- ✅ Parte 2 — Construcción del Map de lookup
-- ✅ Parte 3 — Comparación, fuzzy y clasificación por color
-- 🔲 Parte 4 — Agregar clientes nuevos desde activos (celeste)
-- 🔲 Parte 5 — Generar el Excel de salida
+```
+Para cada fila de nuevosClientes-Zona:
+  │
+  ├─ Normalizar RAZON_SOCIAL (índice 3)
+  ├─ Buscar en activosMap
+  │
+  ├─ 0 matches → fila intacta de zona, ROJO
+  │
+  ├─ 1 match → actualizar con datos de activos, sin color
+  │
+  └─ 2+ matches → fuzzy Dice en Domicilio (umbral 85%)
+        ├─ 1 supera umbral → actualizar, sin color
+        └─ empate / ninguno / 2+ superan → fila intacta de zona, ROJO
+```
 
 ---
 
-## Partes pendientes
+## Gotcha importante — `\r\n` en clientes-activos
+El HTML del ERP tiene saltos de línea dentro de las celdas (`\r\n  `).
+`normalizeStr` los limpia con `.replace(/\r\n\s*/g, ' ')` ANTES del toLowerCase.
+Sin esto el match falla porque las razones sociales quedan con espacios en el medio.
 
-### Parte 4 — Agregar clientes nuevos desde activos
-- Construir un `Set` con las razones sociales normalizadas de **todas** las filas de `clientes-zona`
-- Iterar `clientes-activos`
-- Si la razón social normalizada **no está** en el Set → es un cliente nuevo
-- Agregarlo a `outputRows` con `color: '#ADD8E6'`
+---
 
-### Parte 5 — Generar el output
-- Formato HTML-as-XLS (mismo approach que `compare.js`)
-- Header: columnas de `clientes-zona`
-- Filas normales → sin color
-- Filas ambiguas → `style="background-color:#FF0000"`
-- Filas nuevas → `style="background-color:#ADD8E6"`
-- Escribir `clientes-zona-actualizado.xls` encoding `latin1`
-- Loggear en consola:
+## Fuzzy — Dice Coefficient con Multiset
 ```
-Filas en clientes-zona:        X
-Actualizadas con match exacto: X
-Actualizadas con fuzzy:        X
-Ambiguas (marcadas en rojo):   X
-Sin match:                     X
-Clientes nuevos agregados:     X
-Archivo generado: clientes-zona-actualizado.xls
+similaridad = (2 * intersección de bigramas) / (total bigramas A + total bigramas B)
 ```
+- Usa `Map` en lugar de `Set` para contar frecuencia de bigramas (multiset real)
+- Umbral: **0.85**
 
 ---
 
 ## Colores
 | Situación | Color | Hex |
 |---|---|---|
-| Match normal | Sin color | — |
-| Ambigua | Rojo | `#FF0000` |
-| Cliente nuevo | Celeste | `#ADD8E6` |
-
----
-
-## Función fuzzy — Dice Coefficient
-```
-similaridad = (2 * intersección de bigramas) / (total bigramas A + total bigramas B)
-```
-Umbral: **0.85**
-
----
-
-## Cómo retomar
-1. Corregí el bug de la línea 21-22 (ver arriba ⚠️)
-2. Pedile al asistente: _"continuemos con la parte 4 de actualizarCodigos"_
+| Match | Sin color | — |
+| Sin match / ambiguo | Rojo | `#FF0000` |

@@ -1,4 +1,4 @@
-const fs = require('fs');
+const fs   = require('fs');
 const xlsx = require('xlsx');
 
 // --- UTILIDADES ---
@@ -19,18 +19,19 @@ function parseTable(html) {
 				.replace(/&uacute;/g, 'ú').replace(/&ntilde;/g, 'ñ')
 				.replace(/&Ntilde;/g, 'Ñ').replace(/&#39;/g, "'")
 				.replace(/&amp;/g, '&')
-			.replace(/<[^>]+>/g, '').trim();
-		cols.push(val);
+				.replace(/<[^>]+>/g, '').trim();
+			cols.push(val);
+		}
+		if (cols.length > 0) rows.push(cols);
 	}
-	if (cols.length > 0) rows.push(cols);
-}
-return rows;
+	return rows;
 }
 
 function normalizeStr(str) {
 	if (!str) return '';
 	return str
 		.toString()
+		.replace(/\r\n\s*/g, ' ')
 		.toLowerCase()
 		.normalize("NFD")
 		.replace(/[\u0300-\u036f]/g, "")
@@ -38,48 +39,15 @@ function normalizeStr(str) {
 		.replace(/\s+/g, ' ');
 }
 
-// Lectura
-const activosHtml = fs.readFileSync('clientes-activos_archivos/sheet001.htm', 'latin1');
-const activosRows = parseTable(activosHtml);
-const activosHeader = activosRows[0];
-const activosData = activosRows.slice(1);
-
-const wbZona = xlsx.readFile('clientes-zona.xlsx');
-const wsZona = wbZona.Sheets[wbZona.SheetNames[0]];
-const zonaRows = xlsx.utils.sheet_to_json(wsZona, { header: 1 });
-const zonaHeader = zonaRows[0];
-const zonaData = zonaRows.slice(1);
-
-// Map
-const activosMap = new Map();
-
-activosData.forEach(row => {
-	const razonSocial = normalizeStr(row[1]);
-	if (!razonSocial) return;
-
-	const candidato = {
-		codigo: row[0],
-		telefono: row[2],
-		domicilio: normalizeStr(row[4]),
-		codigoZona: row[7],
-		zona: row[8],
-	};
-	if (!activosMap.has(razonSocial)) {
-		activosMap.set(razonSocial, []);
-	}
-	activosMap.get(razonSocial).push(candidato);
-});
-
-// --- FUNCIÓN FUZZY: DICE COEFFICIENT ---
-
 function diceCoefficient(a, b) {
 	if (!a || !b) return 0;
 	if (a === b) return 1;
 
 	const bigrams = str => {
-		const result = new Set();
+		const result = new Map();
 		for (let i = 0; i < str.length - 1; i++) {
-			result.add(str[i] + str[i + 1]);
+			const bg = str[i] + str[i + 1];
+			result.set(bg, (result.get(bg) || 0) + 1);
 		}
 		return result;
 	};
@@ -88,135 +56,137 @@ function diceCoefficient(a, b) {
 	const bigramsB = bigrams(b);
 
 	let intersection = 0;
-	bigramsA.forEach(bg => {
-		if (bigramsB.has(bg)) intersection++;
+	bigramsA.forEach((count, bg) => {
+		if (bigramsB.has(bg)) {
+			intersection += Math.min(count, bigramsB.get(bg));
+		}
 	});
 
-	return (2 * intersection) / (bigramsA.size + bigramsB.size);
+	let sizeA = 0;
+	let sizeB = 0;
+	bigramsA.forEach(count => sizeA += count);
+	bigramsB.forEach(count => sizeB += count);
+	return (2 * intersection) / (sizeA + sizeB);
 }
 
 const FUZZY_THRESHOLD = 0.85;
 
-// --- PARTE 3: COMPARACIÓN Y ACTUALIZACIÓN ---
+// --- PARTE 1: LECTURA DE ARCHIVOS ---
 
-const outputRows = [];
-let countExacto = 0;
-let countFuzzy = 0;
-let countRojo = 0;
-let countSinMatch = 0;
+const activosHtml = fs.readFileSync('clientes-activos_archivos/sheet001.htm', 'latin1');
+const activosRows = parseTable(activosHtml);
+const activosData = activosRows.slice(1);
 
-zonaData.forEach(row => {
-	const razonSocial = normalizeStr(row[1]);
-	const candidatos = activosMap.get(razonSocial);
-	const newRow = row.map(c => c ?? '');
+const wbZona     = xlsx.readFile('nuevosClientes-Zona.xlsx');
+const wsZona     = wbZona.Sheets[wbZona.SheetNames[0]];
+const zonaRows   = xlsx.utils.sheet_to_json(wsZona, { header: 1 });
+const zonaHeader = zonaRows[0];
+const zonaData   = zonaRows.slice(1);
 
-	// 0 matches — sin tocar
-	if (!candidatos || candidatos.length === 0) {
-		countSinMatch++;
-		outputRows.push({ row: newRow, color: null });
-		return;
-	}
+// --- PARTE 2: CONSTRUIR MAP DE LOOKUP DE ACTIVOS ---
+// clave: razonSocial normalizada
+// valor: array de candidatos { raw, domicilio }
 
-	// 1 match exacto — actualizar directo
-	if (candidatos.length === 1) {
-		const match = candidatos[0];
-		newRow[0] = match.codigo;
-		newRow[2] = match.telefono;
-		newRow[7] = match.codigoZona;
-		newRow[8] = match.zona;
-		countExacto++;
-		outputRows.push({ row: newRow, color: null });
-		return;
-	}
-
-	// 2+ matches — desempate por fuzzy en domicilio
-	const domicilioZona = normalizeStr(row[4]);
-	const superanUmbral = candidatos.filter(c =>
-		diceCoefficient(domicilioZona, c.domicilio) >= FUZZY_THRESHOLD
-	);
-
-	if (superanUmbral.length === 1) {
-		const match = superanUmbral[0];
-		newRow[0] = match.codigo;
-		newRow[2] = match.telefono;
-		newRow[7] = match.codigoZona;
-		newRow[8] = match.zona;
-		countFuzzy++;
-		outputRows.push({ row: newRow, color: null });
-		return;
-	}
-
-	// Empate, ninguno supera, o 2+ superan — rojo
-	countRojo++;
-	outputRows.push({ row: newRow, color: '#FF0000' });
-});
-
-// --- PARTE 4: AGREGAR CLIENTES NUEVOS (celeste) ---
-
-const razonesEnZona = new Set(
-	zonaData.map(row => normalizeStr(row[1]))
-);
-
-let countNuevos = 0;
+const activosMap = new Map();
 
 activosData.forEach(row => {
 	const razonSocial = normalizeStr(row[1]);
 	if (!razonSocial) return;
-	if (razonesEnZona.has(razonSocial)) return;
 
-	// Construir fila con el mismo ancho que zonaHeader
-	const newRow = new Array(zonaHeader.length).fill('');
-	newRow[0] = row[0] ?? '';  // CODIGO
-	newRow[1] = row[1] ?? '';  // RAZON_SOCIAL
-	newRow[2] = row[2] ?? '';  // Teléfono
-	newRow[4] = row[4] ?? '';  // Domicilio
-	newRow[7] = row[7] ?? '';  // Código Zona
-	newRow[8] = row[8] ?? '';  // Zona
+	const candidato = {
+		raw:       row,
+		domicilio: normalizeStr(row[4]),
+	};
 
-	outputRows.push({ row: newRow, color: '#ADD8E6' });
-	countNuevos++;
+	if (!activosMap.has(razonSocial)) {
+		activosMap.set(razonSocial, []);
+	}
+	activosMap.get(razonSocial).push(candidato);
 });
 
-// --- PARTE 5: GENERAR OUTPUT HTML-as-XLS ---
+// --- PARTE 3: COMPARACIÓN Y CONSTRUCCIÓN DEL OUTPUT ---
 
-function cellStyle(color) {
-	return color ? ` style="background-color:${color}"` : '';
-}
+const outputRows = [];
+let countExacto  = 0;
+let countFuzzy   = 0;
+let countRojo    = 0;
+let countSinMatch = 0;
 
-function escapeHtml(val) {
-	return String(val ?? '')
-		.replace(/&/g, '&amp;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;');
-}
+zonaData.forEach(zonaRow => {
+	const razonSocial = normalizeStr(zonaRow[3]); // índice 3 = RAZON_SOCIAL
+	const candidatos  = activosMap.get(razonSocial);
 
-let html = '<html><head><meta charset="windows-1252"></head><body><table>';
-
-// Header
-html += '<tr>';
-for (const col of zonaHeader) {
-	html += `<th>${escapeHtml(col)}</th>`;
-}
-html += '</tr>';
-
-// Filas
-for (const { row, color } of outputRows) {
-	html += `<tr${cellStyle(color)}>`;
-	for (const cell of row) {
-		html += `<td>${escapeHtml(cell)}</td>`;
+	// Sin match — fila intacta de zona, color rojo
+	if (!candidatos || candidatos.length === 0) {
+		countSinMatch++;
+		outputRows.push({ row: zonaRow.map(c => c ?? ''), color: '#FF0000' });
+		return;
 	}
-	html += '</tr>';
-}
 
-html += '</table></body></html>';
+	// Resolver el match ganador
+	let ganador = null;
 
-fs.writeFileSync('clientes-zona-actualizado.xls', html, 'latin1');
+	if (candidatos.length === 1) {
+		ganador = candidatos[0];
+		countExacto++;
+	} else {
+		// Múltiples — desempate por fuzzy en domicilio
+		const domicilioZona = normalizeStr(zonaRow[7]); // índice 7 = Domicilio
+		const superanUmbral = candidatos.filter(c =>
+			diceCoefficient(domicilioZona, c.domicilio) >= FUZZY_THRESHOLD
+		);
 
-// Log final
-console.log(`Filas en clientes-zona:        ${zonaData.length}`);
-console.log(`Actualizadas con match exacto: ${countExacto}`);
-console.log(`Actualizadas con fuzzy:        ${countFuzzy}`);
-console.log(`Ambiguas (marcadas en rojo):   ${countRojo}`);
-console.log(`Sin match:                     ${countSinMatch}`);
-console.log(`Clientes nuevos agregados:     ${countNuevos}`);
+		if (superanUmbral.length === 1) {
+			ganador = superanUmbral[0];
+			countFuzzy++;
+		} else {
+			// Empate o ninguno supera — rojo
+			countRojo++;
+			outputRows.push({ row: zonaRow.map(c => c ?? ''), color: '#FF0000' });
+			return;
+		}
+	}
+
+	// Armar fila de salida: [WKT, nombre] de zona + resto de activos
+	const activoRow = ganador.raw;
+	const newRow = [
+		zonaRow[0]  ?? '', // A - WKT           ← de zona
+		zonaRow[1]  ?? '', // B - nombre         ← de zona
+		activoRow[0] ?? '', // C - CODIGO        ← de activos
+		activoRow[1] ?? '', // D - RAZON_SOCIAL  ← de activos
+		activoRow[2] ?? '', // E - Teléfono
+		activoRow[3] ?? '', // F - Condición IVA
+		activoRow[4] ?? '', // G - Domicilio
+		activoRow[5] ?? '', // H - Departamento
+		activoRow[6] ?? '', // I - Provincia
+		activoRow[7] ?? '', // J - Código Zona
+		activoRow[8] ?? '', // K - Zona
+	];
+
+	outputRows.push({ row: newRow, color: null });
+});
+
+// --- PARTE 4: GENERAR EL EXCEL DE SALIDA ---
+
+const outputHeader = ['WKT', 'nombre', 'CODIGO', 'RAZON_SOCIAL', 'Teléfono', 'Condición IVA', 'Domicilio', 'Departamento', 'Provincia', 'Código Zona', 'Zona'];
+
+let outHtml = `<html><style>body {margin: 0; padding: 0;} td { mso-number-format:'@';}</style><body style="font-family:SansSerif;">\n`;
+outHtml += `<table style="padding: 0; font-size:8pt;" border="1">\n`;
+
+outHtml += `<tr>` + outputHeader.map(h => `<th style="background-color:#CCCCCC;font-weight:bold" align="center">${h}</th>`).join('') + `</tr>\n`;
+
+outputRows.forEach(({ row, color }) => {
+	const trStyle = color ? ` style="background-color:${color}"` : '';
+	outHtml += `<tr${trStyle}>` + row.map(c => `<td>${c ?? ''}</td>`).join('') + `</tr>\n`;
+});
+
+outHtml += `</table></body></html>`;
+
+fs.writeFileSync('clientes-zona-actualizado.xls', outHtml, 'latin1');
+
+console.log(`Filas en nuevosClientes-Zona:   ${zonaData.length}`);
+console.log(`Match exacto:                   ${countExacto}`);
+console.log(`Match por fuzzy:                ${countFuzzy}`);
+console.log(`Sin match (rojo):               ${countSinMatch}`);
+console.log(`Ambiguos (rojo):                ${countRojo}`);
 console.log(`Archivo generado: clientes-zona-actualizado.xls`);
