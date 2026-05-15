@@ -1,4 +1,4 @@
-const fs   = require('fs');
+const fs = require('fs');
 const xlsx = require('xlsx');
 
 // --- UTILIDADES ---
@@ -73,15 +73,16 @@ const FUZZY_THRESHOLD = 0.85;
 
 // --- PARTE 1: LECTURA DE ARCHIVOS ---
 
-const activosHtml = fs.readFileSync('clientes-activos_archivos/sheet001.htm', 'latin1');
-const activosRows = parseTable(activosHtml);
+const wbActivos = xlsx.readFile('clientes-activos.xls');
+const wsActivos = wbActivos.Sheets[wbActivos.SheetNames[0]];
+const activosRows = xlsx.utils.sheet_to_json(wsActivos, { header: 1 });
 const activosData = activosRows.slice(1);
 
-const wbZona     = xlsx.readFile('nuevosClientes-Zona.xlsx');
-const wsZona     = wbZona.Sheets[wbZona.SheetNames[0]];
-const zonaRows   = xlsx.utils.sheet_to_json(wsZona, { header: 1 });
+const wbZona = xlsx.readFile('nuevosClientes-Zona.xlsx');
+const wsZona = wbZona.Sheets[wbZona.SheetNames[0]];
+const zonaRows = xlsx.utils.sheet_to_json(wsZona, { header: 1 });
 const zonaHeader = zonaRows[0];
-const zonaData   = zonaRows.slice(1);
+const zonaData = zonaRows.slice(1);
 
 // --- PARTE 2: CONSTRUIR MAP DE LOOKUP DE ACTIVOS ---
 // clave: razonSocial normalizada
@@ -90,12 +91,12 @@ const zonaData   = zonaRows.slice(1);
 const activosMap = new Map();
 
 activosData.forEach(row => {
-	const razonSocial = normalizeStr(row[1]);
+	const razonSocial = normalizeStr(row[3]); // índice 3 = Razón Social
 	if (!razonSocial) return;
 
 	const candidato = {
-		raw:       row,
-		domicilio: normalizeStr(row[4]),
+		codigo: row[1],                        // índice 1 = Código (columna B)
+		domicilio: normalizeStr(row[9]),       // índice 9 = Domicilio
 	};
 
 	if (!activosMap.has(razonSocial)) {
@@ -106,20 +107,23 @@ activosData.forEach(row => {
 
 // --- PARTE 3: COMPARACIÓN Y CONSTRUCCIÓN DEL OUTPUT ---
 
+const outputHeader = ['WKT', 'nombre', 'CODIGO', 'RAZON_SOCIAL', 'Teléfono', 'Email', 'Condición IVA', 'Domicilio', 'Departamento', 'Provincia', 'Zona'];
+
 const outputRows = [];
-let countExacto  = 0;
-let countFuzzy   = 0;
-let countRojo    = 0;
+let countExacto = 0;
+let countFuzzy = 0;
+let countRojo = 0;
 let countSinMatch = 0;
 
 zonaData.forEach(zonaRow => {
 	const razonSocial = normalizeStr(zonaRow[3]); // índice 3 = RAZON_SOCIAL
-	const candidatos  = activosMap.get(razonSocial);
+	const candidatos = activosMap.get(razonSocial);
 
-	// Sin match — fila intacta de zona, color rojo
+	// Sin match — columnas A y B vacías, color rojo
 	if (!candidatos || candidatos.length === 0) {
 		countSinMatch++;
-		outputRows.push({ row: zonaRow.map(c => c ?? ''), color: '#FF0000' });
+		const newRow = Array.from({ length: outputHeader.length }, (_, i) => i < 2 ? '' : (zonaRow[i] ?? ''));
+		outputRows.push({ row: newRow, color: '#FF0000' });
 		return;
 	}
 
@@ -142,33 +146,18 @@ zonaData.forEach(zonaRow => {
 		} else {
 			// Empate o ninguno supera — rojo
 			countRojo++;
-			outputRows.push({ row: zonaRow.map(c => c ?? ''), color: '#FF0000' });
+			outputRows.push({ row: Array.from({ length: outputHeader.length }, (_, i) => zonaRow[i] ?? ''), color: '#FF0000' });
 			return;
 		}
 	}
 
-	// Armar fila de salida: [WKT, nombre] de zona + resto de activos
-	const activoRow = ganador.raw;
-	const newRow = [
-		zonaRow[0]  ?? '', // A - WKT           ← de zona
-		zonaRow[1]  ?? '', // B - nombre         ← de zona
-		activoRow[0] ?? '', // C - CODIGO        ← de activos
-		activoRow[1] ?? '', // D - RAZON_SOCIAL  ← de activos
-		activoRow[2] ?? '', // E - Teléfono
-		activoRow[3] ?? '', // F - Condición IVA
-		activoRow[4] ?? '', // G - Domicilio
-		activoRow[5] ?? '', // H - Departamento
-		activoRow[6] ?? '', // I - Provincia
-		activoRow[7] ?? '', // J - Código Zona
-		activoRow[8] ?? '', // K - Zona
-	];
-
+	// Sobreescribir CODIGO (índice 2) con el código nuevo de activos
+	const newRow = Array.from({ length: outputHeader.length }, (_, i) => zonaRow[i] ?? '');
+	newRow[2] = ganador.codigo;
 	outputRows.push({ row: newRow, color: null });
 });
 
 // --- PARTE 4: GENERAR EL EXCEL DE SALIDA ---
-
-const outputHeader = ['WKT', 'nombre', 'CODIGO', 'RAZON_SOCIAL', 'Teléfono', 'Condición IVA', 'Domicilio', 'Departamento', 'Provincia', 'Código Zona', 'Zona'];
 
 let outHtml = `<html><style>body {margin: 0; padding: 0;} td { mso-number-format:'@';}</style><body style="font-family:SansSerif;">\n`;
 outHtml += `<table style="padding: 0; font-size:8pt;" border="1">\n`;
