@@ -113,6 +113,7 @@ const outputRows = [];
 let countExacto = 0;
 let countFuzzy = 0;
 let countRojo = 0;
+let countAzul = 0;
 let countSinMatch = 0;
 
 zonaData.forEach(zonaRow => {
@@ -144,9 +145,16 @@ zonaData.forEach(zonaRow => {
 			ganador = superanUmbral[0];
 			countFuzzy++;
 		} else {
-			// Empate o ninguno supera — rojo
-			countRojo++;
-			outputRows.push({ row: Array.from({ length: outputHeader.length }, (_, i) => zonaRow[i] ?? ''), color: '#FF0000' });
+			// Empate o ninguno supera — tomar el de mayor score fuzzy, marcar azul
+			const mejorCandidato = candidatos.reduce((mejor, c) => {
+				const score = diceCoefficient(domicilioZona, c.domicilio);
+				return score > mejor.score ? { candidato: c, score } : mejor;
+			}, { candidato: candidatos[0], score: -1 }).candidato;
+
+			countAzul++;
+			const newRow = Array.from({ length: outputHeader.length }, (_, i) => zonaRow[i] ?? '');
+			newRow[2] = mejorCandidato.codigo;
+			outputRows.push({ row: newRow, color: '#4472C4' });
 			return;
 		}
 	}
@@ -177,5 +185,5 @@ console.log(`Filas en nuevosClientes-Zona:   ${zonaData.length}`);
 console.log(`Match exacto:                   ${countExacto}`);
 console.log(`Match por fuzzy:                ${countFuzzy}`);
 console.log(`Sin match (rojo):               ${countSinMatch}`);
-console.log(`Ambiguos (rojo):                ${countRojo}`);
+console.log(`Ambiguos (azul):                ${countAzul}`);
 console.log(`Archivo generado: clientes-zona-actualizado.xls`);
