@@ -2,6 +2,9 @@ node_modules/
 # Ignorar CSVs
 *.csv
 
+# Archivos temporales de Excel
+~$*
+
 # Logs y basura del OS
 npm-debug.log
 .DS_Store
