@@ -1,7 +1,5 @@
 node_modules/
-# Ignorar las planillas con datos de clientes
-*.xls
-*.xlsx
+# Ignorar CSVs
 *.csv
 
 # Logs y basura del OS
